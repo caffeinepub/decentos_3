@@ -1,0 +1,1565 @@
+import {
+  Bold,
+  BookOpen,
+  CalendarPlus,
+  Check,
+  CheckSquare,
+  Code2,
+  Download,
+  Eye,
+  FileText,
+  FolderPlus,
+  Heading1,
+  Heading2,
+  Italic,
+  List,
+  Pencil,
+  Plus,
+  Search,
+  Star,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOS } from "../../context/OSContext";
+import { useOSEventBus } from "../../context/OSEventBusContext";
+import { useCanisterKV } from "../../hooks/useCanisterKV";
+
+const NOTE_LABELS = [
+  {
+    id: "Personal",
+    color: "rgba(34,197,94,0.85)",
+    bg: "rgba(34,197,94,0.12)",
+    border: "rgba(34,197,94,0.3)",
+  },
+  {
+    id: "Work",
+    color: "rgba(59,130,246,0.85)",
+    bg: "rgba(59,130,246,0.12)",
+    border: "rgba(59,130,246,0.3)",
+  },
+  {
+    id: "Ideas",
+    color: "rgba(249,115,22,0.85)",
+    bg: "rgba(249,115,22,0.12)",
+    border: "rgba(249,115,22,0.3)",
+  },
+  {
+    id: "Archive",
+    color: "rgba(148,163,184,0.85)",
+    bg: "rgba(148,163,184,0.12)",
+    border: "rgba(148,163,184,0.3)",
+  },
+] as const;
+
+type NoteLabel = "Personal" | "Work" | "Ideas" | "Archive";
+
+interface Note {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  label?: NoteLabel;
+  notebookId?: string;
+  updatedAt: number;
+  pinned?: boolean;
+}
+
+interface Notebook {
+  id: string;
+  name: string;
+}
+
+const TEMPLATES = [
+  {
+    id: "blank",
+    name: "Blank",
+    icon: FileText,
+    description: "Start from scratch",
+    content: "",
+    accent: "rgba(99,102,241,0.15)",
+    border: "rgba(99,102,241,0.3)",
+    color: "rgba(99,102,241,0.9)",
+  },
+  {
+    id: "meeting",
+    name: "Meeting Notes",
+    icon: Users,
+    description: "Agenda, attendees & action items",
+    content:
+      "# Meeting Notes\n**Date:** {{date}}\n**Attendees:** \n\n## Agenda\n- \n\n## Discussion\n\n\n## Action Items\n- [ ] \n\n## Next Meeting\n",
+    accent: "rgba(59,130,246,0.15)",
+    border: "rgba(59,130,246,0.3)",
+    color: "rgba(59,130,246,0.9)",
+  },
+  {
+    id: "daily",
+    name: "Daily Journal",
+    icon: BookOpen,
+    description: "Gratitude, priorities & reflection",
+    content:
+      "# {{date}}\n\n## Today I'm grateful for\n- \n\n## Top 3 priorities\n1. \n2. \n3. \n\n## Notes\n\n\n## Tomorrow\n",
+    accent: "rgba(168,85,247,0.15)",
+    border: "rgba(168,85,247,0.3)",
+    color: "rgba(168,85,247,0.9)",
+  },
+  {
+    id: "todo",
+    name: "Quick To-Do",
+    icon: CheckSquare,
+    description: "Prioritized task list",
+    content:
+      "# To-Do\n\n## High Priority\n- [ ] \n\n## Normal\n- [ ] \n\n## Someday\n- [ ] \n",
+    accent: "rgba(34,197,94,0.15)",
+    border: "rgba(34,197,94,0.3)",
+    color: "rgba(34,197,94,0.9)",
+  },
+];
+
+function suggestTag(content: string): string | null {
+  const lower = content.toLowerCase();
+  if (/meeting|agenda|attendees/.test(lower)) return "meeting";
+  if (/recipe|ingredient|tbsp/.test(lower)) return "recipe";
+  if (/workout|exercise|reps/.test(lower)) return "fitness";
+  if (/budget|expense|\$/.test(lower)) return "finance";
+  if (/todo|\[ \]/.test(lower)) return "tasks";
+  return null;
+}
+
+function getTitleFromContent(content: string): string {
+  const firstLine = content.split("\n")[0].trim();
+  return firstLine.length > 0 ? firstLine.slice(0, 50) : "Untitled";
+}
+
+function genId(): string {
+  return `note_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** Minimal regex-based markdown to HTML renderer */
+function renderMarkdown(md: string): string {
+  let html = md
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  html = html.replace(
+    /```([\s\S]*?)```/g,
+    (_m, code) =>
+      `<pre style="background:var(--os-bg-elevated);border:1px solid var(--os-text-muted);border-radius:6px;padding:10px 12px;overflow-x:auto;margin:8px 0"><code style="font-family:monospace;font-size:11px;color:rgba(99,102,241,0.9)">${code.trim()}</code></pre>`,
+  );
+
+  html = html.replace(
+    /`([^`]+)`/g,
+    (_m, c) =>
+      `<code style="background:rgba(0,0,0,0.35);border:1px solid var(--os-border-subtle);border-radius:3px;padding:1px 5px;font-family:monospace;font-size:11px;color:rgba(200,200,240,0.9)">${c}</code>`,
+  );
+
+  html = html.replace(
+    /^### (.+)$/gm,
+    (_m, t) =>
+      `<h3 style="font-size:14px;font-weight:600;color:var(--os-text-primary);margin:12px 0 4px">${t}</h3>`,
+  );
+  html = html.replace(
+    /^## (.+)$/gm,
+    (_m, t) =>
+      `<h2 style="font-size:16px;font-weight:700;color:var(--os-text-primary);margin:16px 0 6px">${t}</h2>`,
+  );
+  html = html.replace(
+    /^# (.+)$/gm,
+    (_m, t) =>
+      `<h1 style="font-size:20px;font-weight:800;color:rgba(129,140,248,1);margin:20px 0 8px">${t}</h1>`,
+  );
+
+  html = html.replace(
+    /^---$/gm,
+    `<hr style="border:none;border-top:1px solid rgba(99,102,241,0.2);margin:12px 0"/>`,
+  );
+
+  html = html.replace(
+    /\*\*\*(.+?)\*\*\*/g,
+    (_m, t) => `<strong><em>${t}</em></strong>`,
+  );
+  html = html.replace(
+    /\*\*(.+?)\*\*/g,
+    (_m, t) =>
+      `<strong style="font-weight:700;color:var(--os-text-primary)">${t}</strong>`,
+  );
+  html = html.replace(
+    /\*(.+?)\*/g,
+    (_m, t) =>
+      `<em style="font-style:italic;color:var(--os-text-primary)">${t}</em>`,
+  );
+
+  html = html.replace(
+    /~~(.+?)~~/g,
+    (_m, t) =>
+      `<s style="color:var(--os-text-secondary);text-decoration:line-through">${t}</s>`,
+  );
+
+  html = html.replace(
+    /^&gt; (.+)$/gm,
+    (_m, t) =>
+      `<blockquote style="border-left:3px solid rgba(129,140,248,0.5);padding-left:12px;margin:8px 0;color:var(--os-text-secondary);font-style:italic">${t}</blockquote>`,
+  );
+
+  html = html.replace(
+    /^[\-\*] (.+)$/gm,
+    (_m, t) =>
+      `<li style="list-style:disc inside;margin:2px 0;padding-left:4px;color:var(--os-text-secondary)">${t}</li>`,
+  );
+
+  html = html.replace(
+    /^\d+\. (.+)$/gm,
+    (_m, t) =>
+      `<li style="list-style:decimal inside;margin:2px 0;padding-left:4px;color:var(--os-text-secondary)">${t}</li>`,
+  );
+
+  html = html.replace(/\n\n/g, "<br/><br/>");
+  html = html.replace(/\n/g, "<br/>");
+
+  // [[note title]] linked notes syntax
+  html = html.replace(
+    /\[\[([^\]]+)\]\]/g,
+    (_m, title) =>
+      `<span class="note-link" data-title="${title.replace(/"/g, "&quot;")}" style="background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.3);border-radius:4px;padding:1px 6px;cursor:pointer;color:rgba(129,140,248,0.9);font-size:0.9em;">${title}</span>`,
+  );
+
+  return html;
+}
+
+function NoteLinkPreview({
+  content,
+  onNoteLink,
+}: { content: string; onNoteLink: (title: string) => void }) {
+  const divRef = useRef<HTMLDivElement>(null);
+  const html = useMemo(() => renderMarkdown(content), [content]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: html change triggers re-attach
+  useEffect(() => {
+    const div = divRef.current;
+    if (!div) return;
+    const links = div.querySelectorAll<HTMLElement>(".note-link");
+    const handlers: (() => void)[] = [];
+    for (const link of links) {
+      const title = link.dataset.title ?? "";
+      const handler = () => onNoteLink(title);
+      link.addEventListener("click", handler);
+      handlers.push(() => link.removeEventListener("click", handler));
+    }
+    return () => {
+      for (const cleanup of handlers) cleanup();
+    };
+  }, [html, onNoteLink]);
+
+  return (
+    <div
+      ref={divRef}
+      className="flex-1 overflow-y-auto p-4 text-sm leading-relaxed"
+      style={{ color: "var(--os-text-secondary)" }}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown preview
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+interface NotesProps {
+  windowProps?: Record<string, unknown>;
+}
+
+export function Notes({ windowProps: _windowProps }: NotesProps) {
+  const { openApp } = useOS();
+  const { emit } = useOSEventBus();
+  const {
+    data: persistedNotes,
+    set: saveNotes,
+    loading: notesLoading,
+  } = useCanisterKV<Note[]>("decentos_notes", []);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const hydratedRef = useRef(false);
+  const { data: persistedNotebooks, set: saveNotebooks } = useCanisterKV<
+    Notebook[]
+  >("notes_notebooks", []);
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [selectedNotebook, setSelectedNotebook] = useState<string>("all");
+  const [addingNotebook, setAddingNotebook] = useState(false);
+  const [newNotebookName, setNewNotebookName] = useState("");
+  const notebooksRef = useRef(false);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+
+  useEffect(() => {
+    if (notebooksRef.current) return;
+    if (persistedNotebooks.length > 0) {
+      notebooksRef.current = true;
+      setNotebooks(persistedNotebooks);
+    }
+  }, [persistedNotebooks]);
+
+  useEffect(() => {
+    if (notesLoading || hydratedRef.current) return;
+    hydratedRef.current = true;
+    if (persistedNotes.length > 0) {
+      const migrated = persistedNotes.map((n) => ({
+        ...n,
+        tags: (n as { tags?: string[] }).tags ?? [],
+      }));
+      setNotes(migrated);
+      setSelectedId(migrated[0].id);
+    } else {
+      const initial: Note = {
+        id: genId(),
+        title: "Welcome to Notes",
+        content:
+          "Welcome to Notes\n\nThis is your decentralized note-taking app. Notes are stored on-chain and persist between sessions.\n\nTips:\n\u2022 Click New Note to create a note\n\u2022 Choose from templates for common formats\n\u2022 Notes auto-save as you type\n\u2022 First line becomes the title\n\u2022 Add tags for organization\n\n## Markdown Support\n\nToggle **preview mode** to render markdown. Try:\n\n- **bold text**\n- *italic text*\n- `inline code`",
+        tags: ["welcome"],
+        updatedAt: Date.now(),
+        pinned: false,
+      };
+      setNotes([initial]);
+      setSelectedId(initial.id);
+      saveNotes([initial]);
+    }
+  }, [notesLoading, persistedNotes, saveNotes]);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [labelFilter, setLabelFilter] = useState<NoteLabel | null>(null);
+  const [tagInput, setTagInput] = useState("");
+  const [editingTags, setEditingTags] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const selectedNote = notes.find((n) => n.id === selectedId) ?? null;
+
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    for (const n of notes) {
+      for (const t of n.tags) {
+        tagSet.add(t);
+      }
+    }
+    return Array.from(tagSet).sort();
+  }, [notes]);
+
+  const suggestedTag = useMemo(() => {
+    if (!selectedNote) return null;
+    return suggestTag(selectedNote.content);
+  }, [selectedNote]);
+
+  const filteredNotes = useMemo(() => {
+    let result = [...notes];
+    if (selectedNotebook !== "all") {
+      result = result.filter((n) => n.notebookId === selectedNotebook);
+    }
+    if (activeTag) {
+      result = result.filter((n) => n.tags.includes(activeTag));
+    }
+    if (labelFilter) {
+      result = result.filter((n) => n.label === labelFilter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (n) =>
+          n.title.toLowerCase().includes(q) ||
+          n.content.toLowerCase().includes(q) ||
+          n.tags.some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+    return [
+      ...result.filter((n) => n.pinned),
+      ...result.filter((n) => !n.pinned),
+    ];
+  }, [notes, searchQuery, selectedNotebook, activeTag, labelFilter]);
+
+  const createFromTemplate = useCallback(
+    (content: string) => {
+      const today = new Date().toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      const resolved = content.replace(/\{\{date\}\}/g, today);
+      const newNote: Note = {
+        id: genId(),
+        title: resolved ? getTitleFromContent(resolved) : "Untitled",
+        content: resolved,
+        tags: [],
+        updatedAt: Date.now(),
+        pinned: false,
+      };
+      setNotes((prev) => {
+        const updated = [newNote, ...prev];
+        saveNotes(updated);
+        return updated;
+      });
+      setSelectedId(newNote.id);
+      setPreviewMode(false);
+      setShowTemplatePicker(false);
+    },
+    [saveNotes],
+  );
+
+  const deleteNote = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setNotes((prev) => {
+        const updated = prev.filter((n) => n.id !== id);
+        saveNotes(updated);
+        return updated;
+      });
+      if (selectedId === id) {
+        const remaining = notes.filter((n) => n.id !== id);
+        setSelectedId(remaining.length > 0 ? remaining[0].id : "");
+      }
+    },
+    [selectedId, notes, saveNotes],
+  );
+
+  const togglePin = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setNotes((prev) => {
+        const updated = prev.map((n) =>
+          n.id === id ? { ...n, pinned: !n.pinned } : n,
+        );
+        saveNotes(updated);
+        return updated;
+      });
+    },
+    [saveNotes],
+  );
+
+  const handleContentChange = useCallback(
+    (value: string) => {
+      if (!selectedId) return;
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === selectedId
+            ? {
+                ...n,
+                content: value,
+                title: getTitleFromContent(value),
+                updatedAt: Date.now(),
+              }
+            : n,
+        ),
+      );
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setNotes((prev) => {
+          saveNotes(prev);
+          return prev;
+        });
+      }, 500);
+    },
+    [selectedId, saveNotes],
+  );
+
+  const exportNote = useCallback(() => {
+    if (!selectedNote) return;
+    const blob = new Blob([selectedNote.content], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedNote.title.replace(/[^a-z0-9_\- ]/gi, "_")}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [selectedNote]);
+
+  const addTag = useCallback(
+    (raw: string) => {
+      if (!selectedId) return;
+      const tag = raw.trim().toLowerCase().replace(/\s+/g, "-");
+      if (!tag) return;
+      setNotes((prev) => {
+        const updated = prev.map((n) =>
+          n.id === selectedId && !n.tags.includes(tag)
+            ? { ...n, tags: [...n.tags, tag] }
+            : n,
+        );
+        saveNotes(updated);
+        return updated;
+      });
+      setTagInput("");
+    },
+    [selectedId, saveNotes],
+  );
+
+  const removeTag = useCallback(
+    (tag: string) => {
+      if (!selectedId) return;
+      setNotes((prev) => {
+        const updated = prev.map((n) =>
+          n.id === selectedId
+            ? { ...n, tags: n.tags.filter((t) => t !== tag) }
+            : n,
+        );
+        saveNotes(updated);
+        return updated;
+      });
+    },
+    [selectedId, saveNotes],
+  );
+
+  const setNoteLabel = useCallback(
+    (label: NoteLabel | undefined) => {
+      if (!selectedId) return;
+      setNotes((prev) => {
+        const updated = prev.map((n) =>
+          n.id === selectedId ? { ...n, label } : n,
+        );
+        saveNotes(updated);
+        return updated;
+      });
+    },
+    [selectedId, saveNotes],
+  );
+
+  const scheduleNote = useCallback(() => {
+    if (!selectedNote) return;
+    emit("open-calendar", {
+      title: selectedNote.title,
+      date: new Date().toISOString().split("T")[0],
+    });
+    openApp("calendar", "Calendar");
+  }, [selectedNote, emit, openApp]);
+
+  const applyFormat = useCallback(
+    (type: "bold" | "italic" | "code" | "h1" | "h2" | "bullet") => {
+      const ta = textareaRef.current;
+      if (!ta || !selectedId) return;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const val = ta.value;
+      const sel = val.slice(start, end);
+
+      if (type === "h1" || type === "h2" || type === "bullet") {
+        const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+        const lineEnd = val.indexOf("\n", start);
+        const line = val.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+        const prefix = type === "h1" ? "# " : type === "h2" ? "## " : "- ";
+        const cleanLine = line.replace(/^(#{1,2}\s|- )/, "");
+        const newLine = prefix + cleanLine;
+        const newVal =
+          val.slice(0, lineStart) +
+          newLine +
+          (lineEnd === -1 ? "" : val.slice(lineEnd));
+        handleContentChange(newVal);
+        requestAnimationFrame(() => {
+          ta.selectionStart = ta.selectionEnd = lineStart + newLine.length;
+          ta.focus();
+        });
+        return;
+      }
+
+      const wrap = type === "bold" ? "**" : type === "italic" ? "*" : "`";
+      const inner = sel || (type === "code" ? "code" : type);
+      const insert = `${wrap}${inner}${wrap}`;
+      const newVal = val.slice(0, start) + insert + val.slice(end);
+      handleContentChange(newVal);
+      requestAnimationFrame(() => {
+        if (sel) {
+          ta.selectionStart = start;
+          ta.selectionEnd = start + insert.length;
+        } else {
+          ta.selectionStart = ta.selectionEnd =
+            start + wrap.length + inner.length;
+        }
+        ta.focus();
+      });
+    },
+    [selectedId, handleContentChange],
+  );
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on selectedId change
+  useEffect(() => {
+    setTagInput("");
+    setEditingTags(false);
+    setPreviewMode(false);
+  }, [selectedId]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  const formatDate = (ts: number) => {
+    const d = new Date(ts);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+
+  const wordCount =
+    selectedNote?.content.trim() === ""
+      ? 0
+      : (selectedNote?.content.trim().split(/\s+/).length ?? 0);
+  const readMinutes = Math.max(1, Math.round(wordCount / 200));
+
+  return (
+    <div className="flex h-full" style={{ background: "var(--os-bg-app)" }}>
+      {/* Sidebar */}
+      <div
+        className="w-52 flex-shrink-0 flex flex-col border-r overflow-hidden"
+        style={{
+          borderColor: "var(--os-border-subtle)",
+          background: "var(--os-bg-app)",
+        }}
+      >
+        {/* Sidebar header */}
+        <div
+          className="flex items-center justify-between px-3 py-2.5 border-b flex-shrink-0"
+          style={{
+            borderColor: "var(--os-border-subtle)",
+            background: "var(--os-bg-elevated)",
+          }}
+        >
+          <span
+            className="text-xs font-semibold"
+            style={{ color: "var(--os-text-primary)" }}
+          >
+            Notes
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowTemplatePicker(true)}
+            data-ocid="notes.add_button"
+            className="flex items-center justify-center w-6 h-6 rounded transition-all hover:opacity-80"
+            style={{
+              background: "rgba(99,102,241,0.1)",
+              border: "1px solid rgba(99,102,241,0.3)",
+              color: "rgba(99,102,241,0.9)",
+            }}
+            title="New Note"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Label filter */}
+        <div
+          className="px-2 py-1.5 border-b flex-shrink-0 flex flex-wrap gap-1"
+          style={{
+            borderColor: "var(--os-border-subtle)",
+            background: "var(--os-bg-app)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setLabelFilter(null)}
+            className="text-[9px] px-2 py-0.5 rounded-full transition-all"
+            style={{
+              background:
+                labelFilter === null
+                  ? "rgba(99,102,241,0.2)"
+                  : "var(--os-border-subtle)",
+              color:
+                labelFilter === null
+                  ? "rgba(99,102,241,1)"
+                  : "var(--os-text-muted)",
+              border: `1px solid ${labelFilter === null ? "rgba(99,102,241,0.4)" : "var(--os-border-subtle)"}`,
+            }}
+          >
+            All
+          </button>
+          {NOTE_LABELS.map((lbl) => (
+            <button
+              key={lbl.id}
+              type="button"
+              onClick={() =>
+                setLabelFilter(lbl.id === labelFilter ? null : lbl.id)
+              }
+              className="text-[9px] px-2 py-0.5 rounded-full transition-all"
+              style={{
+                background:
+                  labelFilter === lbl.id ? lbl.bg : "var(--os-border-subtle)",
+                color:
+                  labelFilter === lbl.id ? lbl.color : "var(--os-text-muted)",
+                border: `1px solid ${labelFilter === lbl.id ? lbl.border : "var(--os-border-subtle)"}`,
+              }}
+            >
+              {lbl.id}
+            </button>
+          ))}
+        </div>
+
+        {/* Notebooks */}
+        <div
+          className="px-2 py-2 border-b flex-shrink-0"
+          style={{
+            borderColor: "var(--os-border-subtle)",
+            background: "var(--os-bg-app)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span
+              className="text-[9px] font-semibold uppercase tracking-wider"
+              style={{ color: "rgba(99,102,241,0.5)" }}
+            >
+              Notebooks
+            </span>
+            <button
+              type="button"
+              onClick={() => setAddingNotebook(true)}
+              title="New Notebook"
+              className="w-4 h-4 rounded flex items-center justify-center transition-all hover:opacity-80"
+              style={{ color: "rgba(99,102,241,0.6)" }}
+            >
+              <FolderPlus className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <button
+              type="button"
+              onClick={() => setSelectedNotebook("all")}
+              data-ocid="notes.notebook.tab"
+              className="flex items-center gap-1.5 w-full text-left px-2 py-1 rounded text-[10px] transition-all"
+              style={{
+                background:
+                  selectedNotebook === "all"
+                    ? "rgba(99,102,241,0.1)"
+                    : "transparent",
+                color:
+                  selectedNotebook === "all"
+                    ? "rgba(99,102,241,0.9)"
+                    : "var(--os-text-secondary)",
+              }}
+            >
+              <BookOpen className="w-2.5 h-2.5" /> All Notes
+              <span
+                className="ml-auto text-[9px]"
+                style={{ color: "var(--os-text-muted)" }}
+              >
+                {notes.length}
+              </span>
+            </button>
+            {notebooks.map((nb) => (
+              <button
+                key={nb.id}
+                type="button"
+                onClick={() => setSelectedNotebook(nb.id)}
+                className="flex items-center gap-1.5 w-full text-left px-2 py-1 rounded text-[10px] transition-all"
+                style={{
+                  background:
+                    selectedNotebook === nb.id
+                      ? "rgba(99,102,241,0.1)"
+                      : "transparent",
+                  color:
+                    selectedNotebook === nb.id
+                      ? "rgba(99,102,241,0.9)"
+                      : "var(--os-text-secondary)",
+                }}
+              >
+                <BookOpen className="w-2.5 h-2.5" />
+                <span className="truncate flex-1">{nb.name}</span>
+                <span
+                  className="ml-auto text-[9px]"
+                  style={{ color: "var(--os-text-muted)" }}
+                >
+                  {notes.filter((n) => n.notebookId === nb.id).length}
+                </span>
+              </button>
+            ))}
+            {addingNotebook && (
+              <div className="flex items-center gap-1 px-1">
+                <input
+                  type="text"
+                  value={newNotebookName}
+                  onChange={(e) => setNewNotebookName(e.target.value)}
+                  placeholder="Notebook name"
+                  data-ocid="notes.notebook.input"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newNotebookName.trim()) {
+                      const nb: Notebook = {
+                        id: `nb_${Date.now()}`,
+                        name: newNotebookName.trim(),
+                      };
+                      const updated = [...notebooks, nb];
+                      setNotebooks(updated);
+                      saveNotebooks(updated);
+                      setNewNotebookName("");
+                      setAddingNotebook(false);
+                      setSelectedNotebook(nb.id);
+                    } else if (e.key === "Escape") {
+                      setAddingNotebook(false);
+                      setNewNotebookName("");
+                    }
+                  }}
+                  className="flex-1 px-1.5 py-0.5 rounded text-[10px] outline-none"
+                  style={{
+                    background: "var(--os-bg-elevated)",
+                    border: "1px solid rgba(99,102,241,0.25)",
+                    color: "var(--os-text-secondary)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (newNotebookName.trim()) {
+                      const nb: Notebook = {
+                        id: `nb_${Date.now()}`,
+                        name: newNotebookName.trim(),
+                      };
+                      const updated = [...notebooks, nb];
+                      setNotebooks(updated);
+                      saveNotebooks(updated);
+                      setNewNotebookName("");
+                      setAddingNotebook(false);
+                      setSelectedNotebook(nb.id);
+                    }
+                  }}
+                  data-ocid="notes.notebook.confirm_button"
+                  className="w-4 h-4 rounded flex items-center justify-center"
+                  style={{ color: "rgba(99,102,241,0.8)" }}
+                >
+                  <Check className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Search bar */}
+        <div
+          className="px-2 py-2 border-b flex-shrink-0"
+          style={{ borderColor: "var(--os-border-subtle)" }}
+        >
+          <div className="relative">
+            <Search
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3"
+              style={{ color: "rgba(99,102,241,0.4)" }}
+            />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search notes..."
+              data-ocid="notes.search_input"
+              className="w-full pl-6 pr-5 py-1 text-[10px] rounded outline-none"
+              style={{
+                background: "var(--os-bg-elevated)",
+                border: "1px solid rgba(99,102,241,0.15)",
+                color: "var(--os-text-primary)",
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2"
+                style={{ color: "var(--os-text-muted)" }}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Tag filter bar */}
+        {allTags.length > 0 && (
+          <div
+            className="px-2 pb-1.5 flex flex-wrap gap-1 border-b flex-shrink-0"
+            style={{ borderColor: "var(--os-border-subtle)" }}
+          >
+            <button
+              type="button"
+              onClick={() => setActiveTag(null)}
+              data-ocid="notes.tab"
+              className="text-[9px] px-2 py-0.5 rounded-full transition-colors"
+              style={{
+                background:
+                  activeTag === null
+                    ? "rgba(99,102,241,0.2)"
+                    : "var(--os-border-subtle)",
+                color:
+                  activeTag === null
+                    ? "rgba(99,102,241,1)"
+                    : "var(--os-text-muted)",
+                border:
+                  activeTag === null
+                    ? "1px solid rgba(99,102,241,0.4)"
+                    : "1px solid var(--os-text-muted)",
+              }}
+            >
+              All
+            </button>
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                data-ocid="notes.tab"
+                className="text-[9px] px-2 py-0.5 rounded-full transition-colors"
+                style={{
+                  background:
+                    activeTag === tag
+                      ? "rgba(99,102,241,0.2)"
+                      : "rgba(99,102,241,0.08)",
+                  color:
+                    activeTag === tag
+                      ? "rgba(99,102,241,1)"
+                      : "rgba(99,102,241,0.6)",
+                  border:
+                    activeTag === tag
+                      ? "1px solid rgba(99,102,241,0.5)"
+                      : "1px solid rgba(99,102,241,0.15)",
+                }}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Note list */}
+        <div className="flex-1 overflow-y-auto">
+          {filteredNotes.length === 0 ? (
+            <div
+              className="flex flex-col items-center justify-center h-full gap-3 p-4"
+              data-ocid="notes.empty_state"
+            >
+              <FileText
+                className="w-10 h-10"
+                style={{ color: "rgba(99,102,241,0.15)" }}
+              />
+              <p
+                className="text-[10px] text-center"
+                style={{ color: "var(--os-text-muted)" }}
+              >
+                {searchQuery ? "No matching notes" : "No notes yet"}
+              </p>
+              {!searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setShowTemplatePicker(true)}
+                  data-ocid="notes.primary_button"
+                  className="text-[10px] px-3 py-1.5 rounded-lg transition-all"
+                  style={{
+                    background: "rgba(99,102,241,0.12)",
+                    border: "1px solid rgba(99,102,241,0.3)",
+                    color: "rgba(99,102,241,0.9)",
+                  }}
+                >
+                  + Create your first note
+                </button>
+              )}
+            </div>
+          ) : (
+            filteredNotes.map((note, i) => (
+              <button
+                type="button"
+                key={note.id}
+                onClick={() => setSelectedId(note.id)}
+                data-ocid={`notes.item.${i + 1}`}
+                className="w-full text-left px-3 py-2 border-b group relative transition-colors"
+                style={{
+                  borderColor: "var(--os-border-subtle)",
+                  background:
+                    selectedId === note.id
+                      ? "rgba(99,102,241,0.08)"
+                      : "transparent",
+                  borderLeft:
+                    selectedId === note.id
+                      ? "2px solid rgba(99,102,241,0.6)"
+                      : "2px solid transparent",
+                }}
+              >
+                <div className="flex items-start justify-between gap-1">
+                  <div className="flex items-center gap-1 flex-1 min-w-0">
+                    {note.pinned && (
+                      <Star
+                        className="w-2.5 h-2.5 flex-shrink-0"
+                        style={{
+                          color: "rgba(234,179,8,0.8)",
+                          fill: "rgba(234,179,8,0.8)",
+                        }}
+                      />
+                    )}
+                    <span
+                      className="text-xs font-medium truncate"
+                      style={{
+                        color:
+                          selectedId === note.id
+                            ? "rgba(99,102,241,0.9)"
+                            : "var(--os-text-secondary)",
+                      }}
+                    >
+                      {searchQuery &&
+                      note.title
+                        .toLowerCase()
+                        .includes(searchQuery.toLowerCase())
+                        ? (() => {
+                            const idx = note.title
+                              .toLowerCase()
+                              .indexOf(searchQuery.toLowerCase());
+                            return (
+                              <>
+                                {note.title.slice(0, idx)}
+                                <mark
+                                  style={{
+                                    background: "rgba(99,102,241,0.3)",
+                                    color: "inherit",
+                                    borderRadius: 2,
+                                    padding: "0 1px",
+                                  }}
+                                >
+                                  {note.title.slice(
+                                    idx,
+                                    idx + searchQuery.length,
+                                  )}
+                                </mark>
+                                {note.title.slice(idx + searchQuery.length)}
+                              </>
+                            );
+                          })()
+                        : note.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => togglePin(note.id, e)}
+                      data-ocid={`notes.toggle.${i + 1}`}
+                      title={note.pinned ? "Unpin" : "Pin note"}
+                      className="opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all"
+                      style={{
+                        color: note.pinned
+                          ? "rgba(234,179,8,0.8)"
+                          : "var(--os-text-muted)",
+                      }}
+                    >
+                      <Star
+                        className="w-3 h-3"
+                        style={{
+                          fill: note.pinned ? "rgba(234,179,8,0.8)" : "none",
+                        }}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => deleteNote(note.id, e)}
+                      data-ocid={`notes.delete_button.${i + 1}`}
+                      className="opacity-0 group-hover:opacity-100 flex-shrink-0 text-destructive/60 hover:text-destructive transition-all"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                <p
+                  className="text-[10px] mt-0.5"
+                  style={{ color: "var(--os-text-muted)" }}
+                >
+                  {formatDate(note.updatedAt)}
+                </p>
+                {note.label &&
+                  (() => {
+                    const lbl = NOTE_LABELS.find((l) => l.id === note.label);
+                    return lbl ? (
+                      <span
+                        className="inline-block text-[9px] px-1.5 py-0.5 rounded-full mt-1"
+                        style={{
+                          background: lbl.bg,
+                          color: lbl.color,
+                          border: `1px solid ${lbl.border}`,
+                        }}
+                      >
+                        {note.label}
+                      </span>
+                    ) : null;
+                  })()}
+                {note.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {note.tags.slice(0, 2).map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[9px] px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: "rgba(99,102,241,0.12)",
+                          color: "rgba(99,102,241,0.7)",
+                          border: "1px solid rgba(99,102,241,0.2)",
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                    {note.tags.length > 2 && (
+                      <span
+                        className="text-[9px]"
+                        style={{ color: "var(--os-text-muted)" }}
+                      >
+                        +{note.tags.length - 2}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Editor */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {selectedNote ? (
+          <>
+            {/* Tags + actions toolbar */}
+            <div
+              className="flex items-center flex-wrap gap-1.5 px-3 py-2 border-b flex-shrink-0"
+              style={{
+                borderColor: "var(--os-border-subtle)",
+                background: "var(--os-bg-elevated)",
+              }}
+            >
+              {selectedNote.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full"
+                  style={{
+                    background: "rgba(99,102,241,0.12)",
+                    color: "rgba(99,102,241,0.8)",
+                    border: "1px solid rgba(99,102,241,0.25)",
+                  }}
+                >
+                  {tag}
+                  <button
+                    type="button"
+                    onClick={() => removeTag(tag)}
+                    style={{ color: "var(--os-text-muted)" }}
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </span>
+              ))}
+              {editingTags ? (
+                <input
+                  type="text"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addTag(tagInput);
+                    } else if (e.key === "Escape") {
+                      setEditingTags(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    if (tagInput) addTag(tagInput);
+                    setEditingTags(false);
+                  }}
+                  placeholder="tag name..."
+                  data-ocid="notes.input"
+                  className="text-[10px] px-2 py-0.5 rounded outline-none w-24"
+                  style={{
+                    background: "var(--os-bg-elevated)",
+                    border: "1px solid rgba(99,102,241,0.3)",
+                    color: "var(--os-text-secondary)",
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setEditingTags(true)}
+                  data-ocid="notes.toggle"
+                  className="text-[10px] px-2 py-0.5 rounded-full transition-colors"
+                  style={{
+                    background: "var(--os-bg-elevated)",
+                    border: "1px dashed var(--os-text-muted)",
+                    color: "var(--os-text-muted)",
+                  }}
+                >
+                  + add tag
+                </button>
+              )}
+
+              <div className="ml-auto flex items-center gap-1">
+                {/* Label picker */}
+                <select
+                  value={selectedNote.label ?? ""}
+                  onChange={(e) =>
+                    setNoteLabel((e.target.value as NoteLabel) || undefined)
+                  }
+                  title="Set label"
+                  data-ocid="notes.select"
+                  className="h-6 text-[10px] px-1 rounded outline-none"
+                  style={{
+                    background: "var(--os-bg-elevated)",
+                    border: "1px solid var(--os-border-subtle)",
+                    color: "var(--os-text-secondary)",
+                    colorScheme: "dark",
+                  }}
+                >
+                  <option value="">No label</option>
+                  {NOTE_LABELS.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.id}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode((v) => !v)}
+                  data-ocid="notes.toggle"
+                  title={previewMode ? "Edit mode" : "Preview markdown"}
+                  className="flex items-center justify-center w-6 h-6 rounded transition-all"
+                  style={{
+                    background: previewMode
+                      ? "rgba(99,102,241,0.15)"
+                      : "transparent",
+                    border: previewMode
+                      ? "1px solid rgba(99,102,241,0.4)"
+                      : "1px solid var(--os-text-muted)",
+                    color: previewMode
+                      ? "rgba(99,102,241,0.9)"
+                      : "var(--os-text-secondary)",
+                  }}
+                >
+                  {previewMode ? (
+                    <Pencil className="w-3 h-3" />
+                  ) : (
+                    <Eye className="w-3 h-3" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={exportNote}
+                  data-ocid="notes.primary_button"
+                  title="Export as .md file"
+                  className="flex items-center justify-center w-6 h-6 rounded transition-all"
+                  style={{
+                    color: "var(--os-text-secondary)",
+                    border: "1px solid var(--os-text-muted)",
+                  }}
+                >
+                  <Download className="w-3 h-3" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={scheduleNote}
+                  data-ocid="notes.calendar_button"
+                  title="Schedule in Calendar"
+                  className="flex items-center justify-center w-6 h-6 rounded transition-all"
+                  style={{
+                    color: "rgba(99,102,241,0.6)",
+                    border: "1px solid rgba(99,102,241,0.2)",
+                  }}
+                >
+                  <CalendarPlus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Suggested tag strip */}
+            {suggestedTag && !selectedNote.tags.includes(suggestedTag) && (
+              <div
+                className="flex items-center gap-2 px-3 py-1 flex-shrink-0"
+                style={{
+                  background: "rgba(99,102,241,0.03)",
+                  borderBottom: "1px solid var(--os-border-subtle)",
+                }}
+              >
+                <span
+                  className="text-[10px]"
+                  style={{ color: "var(--os-text-muted)" }}
+                >
+                  Suggested:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => addTag(suggestedTag)}
+                  className="text-[10px] px-2 py-0.5 rounded-full transition-all hover:opacity-80"
+                  style={{
+                    background: "rgba(99,102,241,0.1)",
+                    color: "rgba(99,102,241,0.85)",
+                    border: "1px solid rgba(99,102,241,0.25)",
+                  }}
+                >
+                  + {suggestedTag}
+                </button>
+              </div>
+            )}
+
+            {/* Formatting toolbar */}
+            {!previewMode && (
+              <div
+                className="flex items-center gap-1 px-3 py-1.5 border-b flex-shrink-0"
+                style={{
+                  borderColor: "var(--os-border-subtle)",
+                  background: "var(--os-bg-app)",
+                }}
+              >
+                {[
+                  {
+                    type: "bold" as const,
+                    icon: <Bold className="w-3 h-3" />,
+                    title: "Bold (**text**)",
+                  },
+                  {
+                    type: "italic" as const,
+                    icon: <Italic className="w-3 h-3" />,
+                    title: "Italic (*text*)",
+                  },
+                  {
+                    type: "code" as const,
+                    icon: <Code2 className="w-3 h-3" />,
+                    title: "Inline code",
+                  },
+                  {
+                    type: "h1" as const,
+                    icon: <Heading1 className="w-3.5 h-3.5" />,
+                    title: "Heading 1",
+                  },
+                  {
+                    type: "h2" as const,
+                    icon: <Heading2 className="w-3.5 h-3.5" />,
+                    title: "Heading 2",
+                  },
+                  {
+                    type: "bullet" as const,
+                    icon: <List className="w-3 h-3" />,
+                    title: "Bullet list",
+                  },
+                ].map(({ type, icon, title }) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      applyFormat(type);
+                    }}
+                    title={title}
+                    className="flex items-center justify-center w-6 h-6 rounded transition-all hover:opacity-80"
+                    style={{
+                      color: "var(--os-text-secondary)",
+                      border: "1px solid var(--os-border-subtle)",
+                    }}
+                  >
+                    {icon}
+                  </button>
+                ))}
+                <div
+                  className="w-px h-4 mx-1"
+                  style={{ background: "var(--os-border-subtle)" }}
+                />
+                <span
+                  className="text-[9px]"
+                  style={{ color: "var(--os-text-muted)" }}
+                >
+                  md formatting
+                </span>
+              </div>
+            )}
+
+            {previewMode ? (
+              <NoteLinkPreview
+                content={selectedNote.content}
+                onNoteLink={(title) => {
+                  const found = notes.find(
+                    (n) => n.title.toLowerCase() === title.toLowerCase(),
+                  );
+                  if (found) setSelectedId(found.id);
+                }}
+              />
+            ) : (
+              <textarea
+                key={selectedNote.id}
+                ref={textareaRef}
+                value={selectedNote.content}
+                onChange={(e) => handleContentChange(e.target.value)}
+                data-ocid="notes.editor"
+                placeholder="Start writing... (supports **markdown**)"
+                className="flex-1 p-4 bg-transparent text-sm font-mono outline-none resize-none leading-relaxed"
+                style={{
+                  color: "var(--os-text-primary)",
+                  caretColor: "rgba(99,102,241,0.8)",
+                }}
+                spellCheck={false}
+              />
+            )}
+            {!previewMode && (
+              <div
+                className="px-4 pb-1 text-[10px]"
+                style={{ color: "var(--os-text-muted)" }}
+              >
+                Tip: Type [[note title]] to link notes
+              </div>
+            )}
+          </>
+        ) : (
+          <div
+            className="flex flex-col items-center justify-center flex-1 gap-4"
+            data-ocid="notes.empty_state"
+          >
+            <FileText
+              className="w-14 h-14"
+              style={{ color: "rgba(99,102,241,0.12)" }}
+            />
+            <div className="text-center">
+              <p
+                className="text-sm font-semibold"
+                style={{ color: "var(--os-text-secondary)" }}
+              >
+                No note selected
+              </p>
+              <p
+                className="text-xs mt-1"
+                style={{ color: "var(--os-text-muted)" }}
+              >
+                Select a note from the sidebar or create a new one
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTemplatePicker(true)}
+              data-ocid="notes.add_button"
+              className="flex items-center gap-1.5 px-4 h-9 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02]"
+              style={{
+                background: "rgba(99,102,241,0.12)",
+                border: "1px solid rgba(99,102,241,0.35)",
+                color: "rgba(99,102,241,1)",
+              }}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Create your first note
+            </button>
+          </div>
+        )}
+
+        {selectedNote && (
+          <div
+            className="px-3 py-1 text-[10px] font-mono border-t flex items-center justify-between flex-shrink-0"
+            style={{ borderColor: "var(--os-border-subtle)" }}
+          >
+            <div className="flex items-center gap-3">
+              <span style={{ color: "var(--os-text-muted)" }}>
+                {wordCount} words
+                {" · "}~{readMinutes} min read
+              </span>
+              <span style={{ color: "var(--os-text-muted)" }}>
+                {selectedNote.content.split("\n").length} lines
+              </span>
+              {previewMode && (
+                <span
+                  className="flex items-center gap-1"
+                  style={{ color: "rgba(99,102,241,0.6)" }}
+                >
+                  <Eye className="w-2.5 h-2.5" /> preview
+                </span>
+              )}
+            </div>
+            <span style={{ color: "var(--os-text-muted)" }}>
+              Auto-saved · {selectedNote.content.length} chars
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Template Picker Modal */}
+      {showTemplatePicker && (
+        <div
+          className="absolute inset-0 flex items-center justify-center z-50"
+          style={{
+            background: "rgba(0,0,0,0.55)",
+            backdropFilter: "blur(8px)",
+          }}
+          data-ocid="notes.modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowTemplatePicker(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setShowTemplatePicker(false);
+          }}
+        >
+          <div
+            className="rounded-2xl w-80 overflow-hidden"
+            style={{
+              background: "var(--os-bg-app)",
+              border: "1px solid rgba(99,102,241,0.25)",
+              boxShadow:
+                "0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(99,102,241,0.05)",
+            }}
+          >
+            {/* Modal header */}
+            <div
+              className="flex items-center justify-between px-4 py-3 border-b"
+              style={{
+                borderColor: "var(--os-border-subtle)",
+                background: "var(--os-bg-elevated)",
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <Plus
+                  className="w-3.5 h-3.5"
+                  style={{ color: "rgba(99,102,241,0.9)" }}
+                />
+                <span
+                  className="text-sm font-semibold"
+                  style={{ color: "var(--os-text-primary)" }}
+                >
+                  New Note
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTemplatePicker(false)}
+                data-ocid="notes.close_button"
+                className="w-6 h-6 flex items-center justify-center rounded transition-all hover:opacity-70"
+                style={{ color: "var(--os-text-muted)" }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Template grid */}
+            <div className="p-3 grid grid-cols-2 gap-2">
+              {TEMPLATES.map((tmpl) => {
+                const Icon = tmpl.icon;
+                return (
+                  <button
+                    key={tmpl.id}
+                    type="button"
+                    onClick={() => createFromTemplate(tmpl.content)}
+                    data-ocid={`notes.template_${tmpl.id}.button`}
+                    className="flex flex-col items-start gap-2 p-3 rounded-xl text-left transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{
+                      background: tmpl.accent,
+                      border: `1px solid ${tmpl.border}`,
+                    }}
+                  >
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{
+                        background: "rgba(0,0,0,0.2)",
+                        border: `1px solid ${tmpl.border}`,
+                      }}
+                    >
+                      <Icon className="w-4 h-4" style={{ color: tmpl.color }} />
+                    </div>
+                    <div>
+                      <p
+                        className="text-xs font-semibold leading-tight"
+                        style={{ color: tmpl.color }}
+                      >
+                        {tmpl.name}
+                      </p>
+                      <p
+                        className="text-[9px] mt-0.5 leading-tight"
+                        style={{ color: "var(--os-text-muted)" }}
+                      >
+                        {tmpl.description}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,1653 @@
+import {
+  Activity,
+  ArrowRight,
+  BookOpen,
+  Check,
+  CheckSquare,
+  Code,
+  Columns,
+  FileText,
+  Globe,
+  Layout,
+  Monitor,
+  Moon,
+  Paintbrush,
+  Server,
+  Settings,
+  Sun,
+  Target,
+  Terminal,
+  TrendingUp,
+  User,
+  Users,
+  X,
+  Zap,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useState } from "react";
+import { AppIcon } from "../AppIcons";
+import {
+  type InstalledApp,
+  useInstalledApps,
+} from "../context/InstalledAppsContext";
+import { useOS } from "../context/OSContext";
+import type { DockPosition } from "../context/OSContext";
+import { DecentOSLogo } from "./DecentOSLogo";
+
+const ONBOARDING_KEY = "decent_os_onboarded";
+const USER_TYPE_KEY = "decent_os_user_type";
+const DISPLAY_NAME_KEY = "decentos_display_name";
+
+export function hasBeenOnboarded(): boolean {
+  try {
+    return localStorage.getItem(ONBOARDING_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+type UserType = "personal" | "developer" | "poweruser" | null;
+type AccentColor = "cyan" | "purple" | "amber" | "green" | "rose";
+
+interface OnboardingV2Props {
+  onDone: (
+    userType: string | null,
+    openApp: string | null,
+    displayName: string | null,
+  ) => void;
+}
+
+const USER_TYPES = [
+  {
+    id: "personal" as UserType,
+    icon: User,
+    title: "Personal",
+    subtitle: "Everyday productivity",
+    apps: "Notes, Calendar, File Manager",
+    color: "#4f46e5",
+  },
+  {
+    id: "developer" as UserType,
+    icon: Code,
+    title: "Developer",
+    subtitle: "Build and explore",
+    apps: "Code Editor, Terminal, API tools",
+    color: "#7c3aed",
+  },
+  {
+    id: "poweruser" as UserType,
+    icon: Zap,
+    title: "Power User",
+    subtitle: "Full control",
+    apps: "Terminal, Process Monitor, advanced tools",
+    color: "#0891b2",
+  },
+];
+
+const ACCENT_COLORS: { id: AccentColor; hex: string; label: string }[] = [
+  { id: "cyan", hex: "#22d3ee", label: "Cyan" },
+  { id: "purple", hex: "#8b5cf6", label: "Purple" },
+  { id: "amber", hex: "#fbbf24", label: "Amber" },
+  { id: "green", hex: "#34d399", label: "Green" },
+  { id: "rose", hex: "#fb7185", label: "Rose" },
+];
+
+interface PackApp extends InstalledApp {
+  description: string;
+  color: string;
+  LucideIcon: React.ElementType;
+}
+
+const APP_PACKS: Record<string, PackApp[]> = {
+  personal: [
+    {
+      id: 14,
+      appId: "contactmanager",
+      name: "Contact Manager",
+      description: "Manage contacts privately on-chain",
+      color: "#3B82F6",
+      emoji: "👤",
+      emojiColor: "#3B82F6",
+      LucideIcon: Users,
+    },
+    {
+      id: 19,
+      appId: "habittracker",
+      name: "Habit Tracker",
+      description: "Build streaks, track daily habits",
+      color: "#22C55E",
+      emoji: "✅",
+      emojiColor: "#22C55E",
+      LucideIcon: Target,
+    },
+    {
+      id: 15,
+      appId: "journal",
+      name: "Journal",
+      description: "Private daily entries with mood",
+      color: "#8B5CF6",
+      emoji: "📖",
+      emojiColor: "#8B5CF6",
+      LucideIcon: BookOpen,
+    },
+    {
+      id: 16,
+      appId: "budget",
+      name: "Budget Tracker",
+      description: "Track income and expenses",
+      color: "#10B981",
+      emoji: "💰",
+      emojiColor: "#10B981",
+      LucideIcon: TrendingUp,
+    },
+    {
+      id: 40,
+      appId: "taskmanager",
+      name: "Task Manager",
+      description: "Todos with priority and subtasks",
+      color: "#22C55E",
+      emoji: "✅",
+      emojiColor: "#22C55E",
+      LucideIcon: CheckSquare,
+    },
+  ],
+  developer: [
+    {
+      id: 5,
+      appId: "processmonitor",
+      name: "Process Monitor",
+      description: "Live cycles and process stats",
+      color: "#06B6D4",
+      emoji: "📊",
+      emojiColor: "#06B6D4",
+      LucideIcon: Activity,
+    },
+    {
+      id: 7,
+      appId: "texteditor",
+      name: "Text Editor",
+      description: "Lightweight editor with syntax modes",
+      color: "#F97316",
+      emoji: "📝",
+      emojiColor: "#F97316",
+      LucideIcon: FileText,
+    },
+    {
+      id: 69,
+      appId: "kanban",
+      name: "Kanban Board",
+      description: "Drag-and-drop project board",
+      color: "#27D7E0",
+      emoji: "🗂️",
+      emojiColor: "#27D7E0",
+      LucideIcon: Columns,
+    },
+    {
+      id: 90,
+      appId: "apitester",
+      name: "API Tester",
+      description: "Test HTTP endpoints visually",
+      color: "#6366F1",
+      emoji: "🧪",
+      emojiColor: "#6366F1",
+      LucideIcon: Globe,
+    },
+  ],
+  poweruser: [
+    {
+      id: 5,
+      appId: "processmonitor",
+      name: "Process Monitor",
+      description: "Live cycles and process stats",
+      color: "#06B6D4",
+      emoji: "📊",
+      emojiColor: "#06B6D4",
+      LucideIcon: Activity,
+    },
+    {
+      id: 7,
+      appId: "texteditor",
+      name: "Text Editor",
+      description: "Lightweight editor with syntax modes",
+      color: "#F97316",
+      emoji: "📝",
+      emojiColor: "#F97316",
+      LucideIcon: FileText,
+    },
+    {
+      id: 69,
+      appId: "kanban",
+      name: "Kanban Board",
+      description: "Drag-and-drop project board",
+      color: "#27D7E0",
+      emoji: "🗂️",
+      emojiColor: "#27D7E0",
+      LucideIcon: Columns,
+    },
+    {
+      id: 39,
+      appId: "drawing",
+      name: "Drawing & Whiteboard",
+      description: "Canvas sketching with PNG export",
+      color: "#A855F7",
+      emoji: "🎨",
+      emojiColor: "#A855F7",
+      LucideIcon: Paintbrush,
+    },
+    {
+      id: 102,
+      appId: "systeminfo",
+      name: "System Info",
+      description: "Canister stats, memory, uptime",
+      color: "#27D7E0",
+      emoji: "🖥️",
+      emojiColor: "#27D7E0",
+      LucideIcon: Monitor,
+    },
+  ],
+};
+
+const FIRST_APPS: Record<string, { id: string; label: string }> = {
+  personal: { id: "notes", label: "Open Notes" },
+  developer: { id: "codeeditor", label: "Open Code Editor" },
+  poweruser: { id: "terminal", label: "Open Terminal" },
+};
+
+// 5 curated wallpapers
+const WALLPAPERS = [
+  {
+    id: "midnight",
+    label: "Midnight",
+    value:
+      "radial-gradient(ellipse at 30% 40%, #1a0533 0%, #0d1a2e 40%, #0a0f1e 100%)",
+    preview: "linear-gradient(135deg, #1a0533 0%, #0d1a2e 60%, #0a0f1e 100%)",
+  },
+  {
+    id: "slate",
+    label: "Slate",
+    value:
+      "radial-gradient(ellipse at 60% 30%, #1e293b 0%, #0f172a 50%, #020617 100%)",
+    preview: "linear-gradient(135deg, #1e293b 0%, #0f172a 60%, #020617 100%)",
+  },
+  {
+    id: "cosmos",
+    label: "Cosmos",
+    value:
+      "radial-gradient(ellipse at 50% 20%, #1a103a 0%, #0d0824 50%, #04020e 100%)",
+    preview: "linear-gradient(135deg, #2a1050 0%, #0d0824 60%, #04020e 100%)",
+  },
+  {
+    id: "aurora",
+    label: "Aurora",
+    value:
+      "radial-gradient(ellipse at 20% 60%, #042f2e 0%, #0d1f1a 40%, #040d0b 100%)",
+    preview: "linear-gradient(135deg, #042f2e 0%, #0d1f1a 60%, #040d0b 100%)",
+  },
+  {
+    id: "charcoal",
+    label: "Charcoal",
+    value:
+      "radial-gradient(ellipse at 40% 50%, #1c1c1e 0%, #111111 60%, #0a0a0a 100%)",
+    preview: "linear-gradient(135deg, #1c1c1e 0%, #111111 60%, #0a0a0a 100%)",
+  },
+];
+
+const TOTAL_STEPS = 6;
+
+const variants = {
+  enter: { x: 60, opacity: 0 },
+  center: { x: 0, opacity: 1 },
+  exit: { x: -60, opacity: 0 },
+};
+
+export function OnboardingV2({ onDone }: OnboardingV2Props) {
+  const [step, setStep] = useState(0);
+  const [userType, setUserType] = useState<UserType>(null);
+  const [selectedWallpaper, setSelectedWallpaper] = useState("midnight");
+  const [previewWallpaper, setPreviewWallpaper] = useState(
+    () => WALLPAPERS[0].value,
+  );
+  const [isDark, setIsDark] = useState(true);
+  const [dockPos, setDockPos] = useState<DockPosition>("bottom");
+  const [displayName, setDisplayName] = useState("");
+  const [selectedAccent, setSelectedAccent] = useState<AccentColor>("cyan");
+  const [selectedPack, setSelectedPack] = useState<Set<number>>(new Set());
+
+  const { setWallpaper, setTheme, setDockPosition, setAccentColor } = useOS();
+  const { install, installedIds } = useInstalledApps();
+
+  const handleSkip = () => {
+    try {
+      localStorage.setItem(ONBOARDING_KEY, "true");
+    } catch {}
+    onDone(null, null, null);
+  };
+
+  const handleDone = (type: UserType, launch: boolean) => {
+    try {
+      localStorage.setItem(ONBOARDING_KEY, "true");
+      if (type) localStorage.setItem(USER_TYPE_KEY, type);
+      if (displayName.trim()) {
+        localStorage.setItem(DISPLAY_NAME_KEY, displayName.trim());
+      }
+      // Apply wallpaper, theme, dock, and accent selections
+      const wallpaper = WALLPAPERS.find((w) => w.id === selectedWallpaper);
+      if (wallpaper) setWallpaper(wallpaper.value);
+      setTheme(isDark ? "dark" : "light");
+      setDockPosition(dockPos);
+      setAccentColor(selectedAccent);
+      // Install selected pack apps that aren't already installed
+      if (type && APP_PACKS[type]) {
+        for (const app of APP_PACKS[type]) {
+          if (selectedPack.has(app.id) && !installedIds.has(app.id)) {
+            install({
+              id: app.id,
+              appId: app.appId,
+              name: app.name,
+              emoji: app.emoji,
+              emojiColor: app.emojiColor,
+            });
+          }
+        }
+      }
+    } catch {}
+    const app = type && launch ? (FIRST_APPS[type]?.id ?? null) : null;
+    const name = displayName.trim() || null;
+    onDone(type, app, name);
+  };
+
+  const progress = ((step + 1) / TOTAL_STEPS) * 100;
+
+  // On the look step (3), show wallpaper preview as outer background
+  const isLookStep = step === 3;
+  const outerBackground = isLookStep ? previewWallpaper : "rgba(0,0,0,0.6)";
+  const outerBlur = isLookStep ? "blur(4px)" : "blur(12px)";
+
+  return (
+    <div
+      className="w-full h-full flex items-center justify-center"
+      style={{
+        background: outerBackground,
+        backdropFilter: outerBlur,
+        transition: "background 0.3s ease",
+      }}
+    >
+      <div
+        style={{
+          width: 460,
+          background: "rgba(20,20,28,0.92)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: 20,
+          boxShadow:
+            "0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04) inset",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        {/* Progress bar */}
+        <div style={{ height: 3, background: "rgba(255,255,255,0.08)" }}>
+          <motion.div
+            style={{
+              height: "100%",
+              background: "linear-gradient(90deg, #6366f1, #8b5cf6)",
+              borderRadius: 2,
+            }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.4, ease: "easeInOut" }}
+          />
+        </div>
+
+        {/* Skip button */}
+        <button
+          type="button"
+          onClick={handleSkip}
+          data-ocid="onboarding.close_button"
+          style={{
+            position: "absolute",
+            top: 16,
+            right: 16,
+            background: "rgba(255,255,255,0.08)",
+            border: "none",
+            borderRadius: 8,
+            color: "rgba(255,255,255,0.4)",
+            cursor: "pointer",
+            padding: "4px 10px",
+            fontSize: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            zIndex: 2,
+          }}
+        >
+          <X size={12} /> Skip
+        </button>
+
+        {/* Step content */}
+        <div style={{ padding: "32px 36px 36px", minHeight: 380 }}>
+          <AnimatePresence mode="wait">
+            {/* ── Step 0: Welcome ── */}
+            {step === 0 && (
+              <motion.div
+                key="step0"
+                variants={variants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.28, ease: "easeInOut" }}
+                style={{ textAlign: "center" }}
+              >
+                <div
+                  style={{
+                    marginBottom: 20,
+                    display: "flex",
+                    justifyContent: "center",
+                  }}
+                >
+                  <DecentOSLogo size={48} />
+                </div>
+                <h1
+                  style={{
+                    color: "white",
+                    fontSize: 24,
+                    fontWeight: 700,
+                    margin: "0 0 8px",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  Your OS. On-chain. Yours forever.
+                </h1>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.55)",
+                    fontSize: 14,
+                    lineHeight: 1.65,
+                    margin: "0 0 32px",
+                  }}
+                >
+                  DecentOS is a fully decentralized operating system running in
+                  your browser. No accounts. No servers. Your data lives on the
+                  blockchain permanently.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  data-ocid="onboarding.primary_button"
+                  style={{
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    border: "none",
+                    borderRadius: 12,
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    padding: "12px 32px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  Get Started <ArrowRight size={16} />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 1: User Type ── */}
+            {step === 1 && (
+              <motion.div
+                key="step1"
+                variants={variants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.28, ease: "easeInOut" }}
+              >
+                <h2
+                  style={{
+                    color: "white",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    margin: "0 0 6px",
+                  }}
+                >
+                  What brings you to DecentOS?
+                </h2>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.45)",
+                    fontSize: 13,
+                    margin: "0 0 24px",
+                  }}
+                >
+                  We'll personalize your setup based on how you work.
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    marginBottom: 28,
+                  }}
+                >
+                  {USER_TYPES.map((type) => {
+                    const Icon = type.icon;
+                    const selected = userType === type.id;
+                    return (
+                      <button
+                        type="button"
+                        key={type.id}
+                        onClick={() => setUserType(type.id)}
+                        data-ocid={`onboarding.${type.id}.button`}
+                        style={{
+                          background: selected
+                            ? "rgba(99,102,241,0.18)"
+                            : "rgba(255,255,255,0.04)",
+                          border: selected
+                            ? "1.5px solid rgba(99,102,241,0.7)"
+                            : "1.5px solid rgba(255,255,255,0.08)",
+                          borderRadius: 14,
+                          padding: "14px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 14,
+                          textAlign: "left",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 10,
+                            background: selected
+                              ? type.color
+                              : "rgba(255,255,255,0.08)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                            transition: "background 0.15s ease",
+                          }}
+                        >
+                          <Icon size={20} color="white" />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div
+                            style={{
+                              color: "white",
+                              fontWeight: 600,
+                              fontSize: 14,
+                            }}
+                          >
+                            {type.title}
+                          </div>
+                          <div
+                            style={{
+                              color: "rgba(255,255,255,0.45)",
+                              fontSize: 12,
+                            }}
+                          >
+                            {type.subtitle} — {type.apps}
+                          </div>
+                        </div>
+                        {selected && (
+                          <Check
+                            size={16}
+                            color="#818cf8"
+                            style={{ flexShrink: 0 }}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => userType && setStep(2)}
+                  disabled={!userType}
+                  data-ocid="onboarding.continue_button"
+                  style={{
+                    width: "100%",
+                    background: userType
+                      ? "linear-gradient(135deg, #6366f1, #8b5cf6)"
+                      : "rgba(255,255,255,0.08)",
+                    border: "none",
+                    borderRadius: 12,
+                    color: userType ? "white" : "rgba(255,255,255,0.3)",
+                    cursor: userType ? "pointer" : "not-allowed",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    padding: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  Continue <ArrowRight size={16} />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 2: Personalize ── */}
+            {step === 2 && (
+              <motion.div
+                key="step2"
+                variants={variants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.28, ease: "easeInOut" }}
+              >
+                <h2
+                  style={{
+                    color: "white",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    margin: "0 0 6px",
+                  }}
+                >
+                  Make it yours
+                </h2>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.45)",
+                    fontSize: 13,
+                    margin: "0 0 28px",
+                  }}
+                >
+                  Set your name and pick an accent color.
+                </p>
+
+                {/* Display name input */}
+                <div style={{ marginBottom: 28 }}>
+                  <label
+                    htmlFor="onboarding-name"
+                    style={{
+                      display: "block",
+                      color: "rgba(255,255,255,0.4)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
+                      marginBottom: 10,
+                    }}
+                  >
+                    Your Name
+                  </label>
+                  <input
+                    id="onboarding-name"
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="Your name (optional)"
+                    data-ocid="onboarding.name.input"
+                    style={{
+                      width: "100%",
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1.5px solid rgba(255,255,255,0.12)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 14,
+                      padding: "11px 14px",
+                      outline: "none",
+                      boxSizing: "border-box",
+                      transition: "border-color 0.15s ease",
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor =
+                        "rgba(99,102,241,0.7)";
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor =
+                        "rgba(255,255,255,0.12)";
+                    }}
+                  />
+                </div>
+
+                {/* Accent color */}
+                <div style={{ marginBottom: 32 }}>
+                  <p
+                    style={{
+                      color: "rgba(255,255,255,0.4)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
+                      margin: "0 0 12px",
+                    }}
+                  >
+                    Accent Color
+                  </p>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "center",
+                    }}
+                  >
+                    {ACCENT_COLORS.map((ac) => {
+                      const isSelected = selectedAccent === ac.id;
+                      return (
+                        <button
+                          key={ac.id}
+                          type="button"
+                          onClick={() => setSelectedAccent(ac.id)}
+                          title={ac.label}
+                          data-ocid={`onboarding.accent_${ac.id}.button`}
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: "50%",
+                            background: ac.hex,
+                            border: isSelected
+                              ? "2.5px solid white"
+                              : "2.5px solid transparent",
+                            cursor: "pointer",
+                            padding: 0,
+                            outline: isSelected
+                              ? "2px solid rgba(255,255,255,0.3)"
+                              : "none",
+                            outlineOffset: 2,
+                            transition: "all 0.15s ease",
+                            flexShrink: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            boxShadow: isSelected
+                              ? `0 0 12px ${ac.hex}88`
+                              : "none",
+                          }}
+                        >
+                          {isSelected && (
+                            <Check size={14} color="white" strokeWidth={3} />
+                          )}
+                        </button>
+                      );
+                    })}
+                    <span
+                      style={{
+                        color: "rgba(255,255,255,0.4)",
+                        fontSize: 12,
+                        marginLeft: 4,
+                      }}
+                    >
+                      {
+                        ACCENT_COLORS.find((a) => a.id === selectedAccent)
+                          ?.label
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setStep(3)}
+                  data-ocid="onboarding.continue_button"
+                  style={{
+                    width: "100%",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    border: "none",
+                    borderRadius: 12,
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    padding: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  Continue <ArrowRight size={16} />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 3: Choose your look ── */}
+            {step === 3 && (
+              <motion.div
+                key="step3"
+                variants={variants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.28, ease: "easeInOut" }}
+              >
+                <h2
+                  style={{
+                    color: "white",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    margin: "0 0 6px",
+                  }}
+                >
+                  Choose your look
+                </h2>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.45)",
+                    fontSize: 13,
+                    margin: "0 0 24px",
+                  }}
+                >
+                  Pick a wallpaper and UI theme. You can change this later in
+                  Settings.
+                </p>
+
+                {/* Light / Dark toggle */}
+                <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+                  <button
+                    type="button"
+                    onClick={() => setIsDark(true)}
+                    data-ocid="onboarding.dark_toggle"
+                    style={{
+                      flex: 1,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: isDark
+                        ? "1.5px solid rgba(99,102,241,0.7)"
+                        : "1.5px solid rgba(255,255,255,0.08)",
+                      background: isDark
+                        ? "rgba(99,102,241,0.18)"
+                        : "rgba(255,255,255,0.04)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      color: "white",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <Moon size={16} />
+                    Dark
+                    {isDark && <Check size={14} color="#818cf8" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsDark(false)}
+                    data-ocid="onboarding.light_toggle"
+                    style={{
+                      flex: 1,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: !isDark
+                        ? "1.5px solid rgba(99,102,241,0.7)"
+                        : "1.5px solid rgba(255,255,255,0.08)",
+                      background: !isDark
+                        ? "rgba(99,102,241,0.18)"
+                        : "rgba(255,255,255,0.04)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      color: "white",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <Sun size={16} />
+                    Light
+                    {!isDark && <Check size={14} color="#818cf8" />}
+                  </button>
+                </div>
+
+                {/* Wallpaper picker — two-panel layout */}
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.4)",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    margin: "0 0 12px",
+                  }}
+                >
+                  Wallpaper
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 12,
+                    marginBottom: 24,
+                    minHeight: 220,
+                    flexWrap: "wrap" as const,
+                  }}
+                >
+                  {/* Left: stacked swatches */}
+                  <div
+                    style={{
+                      flex: "0 0 38%",
+                      minWidth: 120,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 7,
+                    }}
+                  >
+                    {WALLPAPERS.map((w) => {
+                      const isSelected = selectedWallpaper === w.id;
+                      return (
+                        <button
+                          type="button"
+                          key={w.id}
+                          onClick={() => {
+                            setSelectedWallpaper(w.id);
+                            setPreviewWallpaper(w.value);
+                          }}
+                          onMouseEnter={() => setPreviewWallpaper(w.value)}
+                          onMouseLeave={() => {
+                            const current = WALLPAPERS.find(
+                              (wp) => wp.id === selectedWallpaper,
+                            );
+                            setPreviewWallpaper(
+                              current?.value ?? WALLPAPERS[0].value,
+                            );
+                          }}
+                          data-ocid={`onboarding.wallpaper.${w.id}`}
+                          style={{
+                            height: 36,
+                            borderRadius: 9,
+                            background: w.preview,
+                            border: isSelected
+                              ? "2px solid #818cf8"
+                              : "2px solid rgba(255,255,255,0.08)",
+                            cursor: "pointer",
+                            position: "relative",
+                            display: "flex",
+                            alignItems: "center",
+                            padding: "0 10px",
+                            gap: 8,
+                            transition:
+                              "border-color 0.15s ease, box-shadow 0.15s ease",
+                            boxShadow: isSelected
+                              ? "0 0 0 1px #818cf8"
+                              : "none",
+                          }}
+                          title={w.label}
+                        >
+                          <span
+                            style={{
+                              flex: 1,
+                              fontSize: 11,
+                              color: "rgba(255,255,255,0.9)",
+                              fontWeight: 600,
+                              textAlign: "left",
+                              textShadow: "0 1px 3px rgba(0,0,0,0.8)",
+                              letterSpacing: "0.01em",
+                            }}
+                          >
+                            {w.label}
+                          </span>
+                          {isSelected && (
+                            <Check
+                              size={13}
+                              color="white"
+                              strokeWidth={3}
+                              style={{
+                                filter:
+                                  "drop-shadow(0 1px 2px rgba(0,0,0,0.8))",
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Right: live desktop preview */}
+                  <div
+                    style={{
+                      flex: "1 1 0",
+                      minWidth: 160,
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      background: previewWallpaper,
+                      transition: "background 0.3s ease",
+                      position: "relative",
+                      border: "1.5px solid rgba(255,255,255,0.1)",
+                      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                    }}
+                  >
+                    {/* Menu bar */}
+                    <div
+                      style={{
+                        height: 18,
+                        background: isDark
+                          ? "rgba(20,20,28,0.9)"
+                          : "rgba(240,240,248,0.95)",
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "0 8px",
+                        justifyContent: "space-between",
+                        backdropFilter: "blur(8px)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 7,
+                          fontWeight: 700,
+                          color: isDark
+                            ? "rgba(255,255,255,0.85)"
+                            : "rgba(0,0,0,0.8)",
+                          letterSpacing: "0.03em",
+                        }}
+                      >
+                        DecentOS
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 7,
+                          color: isDark
+                            ? "rgba(255,255,255,0.5)"
+                            : "rgba(0,0,0,0.45)",
+                        }}
+                      >
+                        9:41
+                      </span>
+                    </div>
+
+                    {/* Desktop area */}
+                    <div
+                      style={{
+                        position: "relative",
+                        padding: 8,
+                        height: "calc(100% - 18px - 22px)",
+                      }}
+                    >
+                      {/* Desktop icons 2-column grid */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: 5,
+                          width: 56,
+                        }}
+                      >
+                        {[
+                          { color: "#f59e0b", label: "Notes" },
+                          { color: "#3b82f6", label: "Cal" },
+                          { color: "#10b981", label: "Files" },
+                          { color: "#8b5cf6", label: "Set" },
+                        ].map((icon) => (
+                          <div
+                            key={icon.label}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              gap: 2,
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: 5,
+                                background: icon.color,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: 10,
+                                  height: 10,
+                                  background: "rgba(255,255,255,0.85)",
+                                  borderRadius: 2,
+                                }}
+                              />
+                            </div>
+                            <span
+                              style={{
+                                fontSize: 6,
+                                color: "white",
+                                textShadow: "0 1px 2px rgba(0,0,0,0.9)",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {icon.label}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Fake window */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "20%",
+                          left: "28%",
+                          right: 6,
+                          bottom: 4,
+                          borderRadius: 8,
+                          background: isDark
+                            ? "rgba(30,30,38,0.92)"
+                            : "rgba(250,250,252,0.93)",
+                          backdropFilter: "blur(12px)",
+                          border: isDark
+                            ? "1px solid rgba(255,255,255,0.1)"
+                            : "1px solid rgba(0,0,0,0.08)",
+                          overflow: "hidden",
+                          boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+                        }}
+                      >
+                        {/* Title bar */}
+                        <div
+                          style={{
+                            height: 14,
+                            background: isDark
+                              ? "rgba(50,50,60,0.9)"
+                              : "rgba(230,230,238,0.9)",
+                            display: "flex",
+                            alignItems: "center",
+                            padding: "0 5px",
+                            gap: 3,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: "50%",
+                              background: "#ff5f57",
+                            }}
+                          />
+                          <div
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: "50%",
+                              background: "#febc2e",
+                            }}
+                          />
+                          <div
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: "50%",
+                              background: "#28c840",
+                            }}
+                          />
+                        </div>
+                        {/* Content lines */}
+                        <div
+                          style={{
+                            padding: 5,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 3,
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: 4,
+                              borderRadius: 2,
+                              background: isDark
+                                ? "rgba(255,255,255,0.15)"
+                                : "rgba(0,0,0,0.12)",
+                              width: "70%",
+                            }}
+                          />
+                          <div
+                            style={{
+                              height: 3,
+                              borderRadius: 2,
+                              background: isDark
+                                ? "rgba(255,255,255,0.08)"
+                                : "rgba(0,0,0,0.07)",
+                              width: "90%",
+                            }}
+                          />
+                          <div
+                            style={{
+                              height: 3,
+                              borderRadius: 2,
+                              background: isDark
+                                ? "rgba(255,255,255,0.08)"
+                                : "rgba(0,0,0,0.07)",
+                              width: "55%",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dock */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 4,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        background: isDark
+                          ? "rgba(30,30,38,0.7)"
+                          : "rgba(240,240,248,0.75)",
+                        backdropFilter: "blur(12px)",
+                        borderRadius: 10,
+                        padding: "3px 6px",
+                        display: "flex",
+                        gap: 4,
+                        border: isDark
+                          ? "1px solid rgba(255,255,255,0.1)"
+                          : "1px solid rgba(0,0,0,0.08)",
+                      }}
+                    >
+                      {[
+                        "#f59e0b",
+                        "#3b82f6",
+                        "#ef4444",
+                        "#10b981",
+                        "#8b5cf6",
+                      ].map((color) => (
+                        <div
+                          key={color}
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: 4,
+                            background: color,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dock position */}
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.4)",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    margin: "0 0 10px",
+                  }}
+                >
+                  Dock Position
+                </p>
+                <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+                  {(["bottom", "left", "right"] as DockPosition[]).map(
+                    (pos) => (
+                      <button
+                        key={pos}
+                        type="button"
+                        onClick={() => setDockPos(pos)}
+                        data-ocid={`onboarding.dock_${pos}.button`}
+                        style={{
+                          flex: 1,
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          border:
+                            dockPos === pos
+                              ? "1.5px solid rgba(99,102,241,0.7)"
+                              : "1.5px solid rgba(255,255,255,0.08)",
+                          background:
+                            dockPos === pos
+                              ? "rgba(99,102,241,0.18)"
+                              : "rgba(255,255,255,0.04)",
+                          cursor: "pointer",
+                          color: "white",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          textTransform: "capitalize",
+                          transition: "all 0.15s ease",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                        }}
+                      >
+                        {dockPos === pos && <Check size={12} color="#818cf8" />}
+                        {pos}
+                      </button>
+                    ),
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Initialize pack with all apps for this user type pre-checked
+                    if (userType && APP_PACKS[userType]) {
+                      setSelectedPack(
+                        new Set(APP_PACKS[userType].map((a) => a.id)),
+                      );
+                    }
+                    setStep(4);
+                  }}
+                  data-ocid="onboarding.continue_button"
+                  style={{
+                    width: "100%",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    border: "none",
+                    borderRadius: 12,
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    padding: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  Continue <ArrowRight size={16} />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 4: App Pack ── */}
+            {step === 4 && userType && (
+              <motion.div
+                key="step4"
+                variants={variants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.28, ease: "easeInOut" }}
+              >
+                <h2
+                  style={{
+                    color: "white",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    margin: "0 0 6px",
+                  }}
+                >
+                  Install your starter apps
+                </h2>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.45)",
+                    fontSize: 13,
+                    margin: "0 0 20px",
+                  }}
+                >
+                  Handpicked for{" "}
+                  {userType === "personal"
+                    ? "personal"
+                    : userType === "developer"
+                      ? "developers"
+                      : "power users"}
+                  . Uncheck any you don't want.
+                </p>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    marginBottom: 24,
+                    maxHeight: 280,
+                    overflowY: "auto",
+                  }}
+                >
+                  {(APP_PACKS[userType] ?? []).map((app) => {
+                    const Icon = app.LucideIcon;
+                    const checked = selectedPack.has(app.id);
+                    return (
+                      <button
+                        key={app.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPack((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(app.id)) {
+                              next.delete(app.id);
+                            } else {
+                              next.add(app.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        data-ocid={`onboarding.pack_${app.appId}.toggle`}
+                        style={{
+                          background: checked
+                            ? "rgba(99,102,241,0.12)"
+                            : "rgba(255,255,255,0.04)",
+                          border: checked
+                            ? "1.5px solid rgba(99,102,241,0.5)"
+                            : "1.5px solid rgba(255,255,255,0.08)",
+                          borderRadius: 12,
+                          padding: "10px 14px",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          textAlign: "left",
+                          transition: "all 0.15s ease",
+                          width: "100%",
+                        }}
+                      >
+                        {/* App icon */}
+                        <div
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 8,
+                            background: app.color,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Icon size={16} color="white" />
+                        </div>
+                        {/* App info */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              color: "white",
+                              fontWeight: 600,
+                              fontSize: 13,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {app.name}
+                          </div>
+                          <div
+                            style={{
+                              color: "rgba(255,255,255,0.4)",
+                              fontSize: 11,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {app.description}
+                          </div>
+                        </div>
+                        {/* Custom checkbox */}
+                        <div
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 5,
+                            background: checked
+                              ? "#6366f1"
+                              : "rgba(255,255,255,0.08)",
+                            border: checked
+                              ? "1.5px solid #6366f1"
+                              : "1.5px solid rgba(255,255,255,0.2)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                            transition: "all 0.15s ease",
+                          }}
+                        >
+                          {checked && (
+                            <Check size={11} color="white" strokeWidth={3} />
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.3)",
+                    fontSize: 11,
+                    margin: "0 0 16px",
+                    textAlign: "center",
+                  }}
+                >
+                  {selectedPack.size} app{selectedPack.size !== 1 ? "s" : ""}{" "}
+                  selected · You can install more from the App Store later
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setStep(5)}
+                  data-ocid="onboarding.continue_button"
+                  style={{
+                    width: "100%",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    border: "none",
+                    borderRadius: 12,
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    padding: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  Continue <ArrowRight size={16} />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 5: All Set ── */}
+            {step === 5 && (
+              <motion.div
+                key="step5"
+                variants={variants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.28, ease: "easeInOut" }}
+                style={{ textAlign: "center" }}
+              >
+                <motion.div
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{
+                    delay: 0.1,
+                    type: "spring",
+                    stiffness: 260,
+                    damping: 20,
+                  }}
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: "50%",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    margin: "0 auto 20px",
+                    boxShadow: "0 0 32px rgba(99,102,241,0.4)",
+                  }}
+                >
+                  <Check size={28} color="white" strokeWidth={3} />
+                </motion.div>
+                <h2
+                  style={{
+                    color: "white",
+                    fontSize: 24,
+                    fontWeight: 700,
+                    margin: "0 0 8px",
+                  }}
+                >
+                  {displayName.trim()
+                    ? `You're all set, ${displayName.trim()}!`
+                    : "You're all set"}
+                </h2>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.5)",
+                    fontSize: 14,
+                    margin: "0 0 32px",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Your{" "}
+                  {userType === "personal"
+                    ? "personal"
+                    : userType === "developer"
+                      ? "developer"
+                      : "power user"}{" "}
+                  workspace is ready. Let's open your first app.
+                </p>
+
+                {userType && (
+                  <button
+                    type="button"
+                    onClick={() => handleDone(userType, true)}
+                    data-ocid="onboarding.open_app_button"
+                    style={{
+                      width: "100%",
+                      background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                      border: "none",
+                      borderRadius: 12,
+                      color: "white",
+                      cursor: "pointer",
+                      fontSize: 15,
+                      fontWeight: 600,
+                      padding: "13px",
+                      marginBottom: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      boxShadow: "0 4px 20px rgba(99,102,241,0.35)",
+                    }}
+                  >
+                    {FIRST_APPS[userType]?.label ?? "Open App"}{" "}
+                    <ArrowRight size={16} />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleDone(userType, false)}
+                  data-ocid="onboarding.secondary_button"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "rgba(255,255,255,0.35)",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    padding: "8px",
+                    width: "100%",
+                  }}
+                >
+                  Go to desktop instead
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  );
+}
