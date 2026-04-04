@@ -5,10 +5,9 @@ import {
 } from "../hooks/useInternetIdentity";
 
 /**
- * DEV_MODE = true → skip Internet Identity; use anonymous session.
- * Flip to false when you're ready for production II auth.
+ * DEV_MODE = false → require Internet Identity login for full functionality.
  */
-export const DEV_MODE = true;
+export const DEV_MODE = false;
 
 export interface AuthContextType {
   isAuthenticated: boolean;
@@ -19,30 +18,22 @@ export interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType>({
-  isAuthenticated: DEV_MODE,
-  principal: DEV_MODE ? "dev-mode" : null,
+  isAuthenticated: false,
+  principal: null,
   login: () => {},
   logout: () => {},
   isLoading: false,
 });
 
-/**
- * Inner component that consumes InternetIdentityProvider
- * and exposes the simplified AuthContext.
- */
 function AuthStateProvider({ children }: { children: ReactNode }) {
   const { identity, login, clear, isLoggingIn, isInitializing } =
     useInternetIdentity();
 
-  const isAuthenticated = DEV_MODE
-    ? true
-    : !!identity && !identity.getPrincipal().isAnonymous();
+  const isAuthenticated = !!identity && !identity.getPrincipal().isAnonymous();
 
-  const principal = DEV_MODE
-    ? "dev-mode"
-    : (identity?.getPrincipal().toString() ?? null);
+  const principal = identity?.getPrincipal().toString() ?? null;
 
-  const isLoading = DEV_MODE ? false : isLoggingIn || isInitializing;
+  const isLoading = isLoggingIn || isInitializing;
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -58,10 +49,6 @@ function AuthStateProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-/**
- * Wrap your app tree with AuthProvider to get auth state everywhere.
- * It includes InternetIdentityProvider internally.
- */
 export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <InternetIdentityProvider>

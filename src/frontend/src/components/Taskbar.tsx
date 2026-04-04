@@ -3,6 +3,7 @@ import {
   Cpu,
   FileText,
   Folder,
+  LogOut,
   Pin,
   Settings,
   Store,
@@ -14,6 +15,7 @@ import type React from "react";
 import { useEffect, useState } from "react";
 import { useClipboard } from "../context/ClipboardContext";
 import { useOS } from "../context/OSContext";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import { useCyclesBalance } from "../hooks/useQueries";
 import { ClipboardPanel } from "./ClipboardPanel";
 import { DecentOSLogo } from "./DecentOSLogo";
@@ -316,6 +318,7 @@ export function Taskbar() {
   const { data: cycles } = useCyclesBalance();
   const { clips } = useClipboard();
   const { pinned, unpin } = usePinnedApps();
+  const { clear } = useInternetIdentity();
   const [clipboardOpen, setClipboardOpen] = useState(false);
 
   const hasPinned = clips.some((c) => c.pinned);
@@ -588,6 +591,22 @@ export function Taskbar() {
             <Wifi className="w-3 h-3 text-green-400" />
             {principalSnippet}
           </div>
+        )}
+
+        {/* Logout button — only shown when logged in */}
+        {principalSnippet && (
+          <DockBtn
+            onClick={clear}
+            data-ocid="taskbar.logout.button"
+            title="Sign out"
+            sizePx={sizePx}
+            magnify={dockMagnification}
+          >
+            <LogOut
+              className="w-4 h-4"
+              style={{ color: "oklch(0.65 0.18 25)" }}
+            />
+          </DockBtn>
         )}
       </div>
     </div>

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Desktop } from "./components/Desktop";
 import LandingPage from "./components/LandingPage";
 import { LoginScreen } from "./components/LoginScreen";
-import { AuthProvider, DEV_MODE, useAuth } from "./context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ClipboardProvider } from "./context/ClipboardContext";
 import { FolderProvider } from "./context/FolderContext";
 import { InstalledAppsProvider } from "./context/InstalledAppsContext";
@@ -21,14 +21,8 @@ const queryClient = new QueryClient({
   },
 });
 
-const DEV_SESSION = {
-  principal: "dev-mode",
-  displayName: "Developer",
-  cyclesBalance: BigInt(1_000_000_000),
-};
-
 /**
- * Inner OS shell — only rendered when authenticated (or DEV_MODE).
+ * Inner OS shell — only rendered when authenticated.
  */
 function OSShell() {
   useEffect(() => {
@@ -49,7 +43,7 @@ function OSShell() {
   return (
     <NotificationProvider>
       <OSEventBusProvider>
-        <OSProvider initialSession={DEV_SESSION}>
+        <OSProvider initialSession={null}>
           <InstalledAppsProvider>
             <ClipboardProvider>
               <FolderProvider>
@@ -75,15 +69,11 @@ function OSShell() {
 }
 
 /**
- * Auth gate — shows LoginScreen if not authenticated (only in non-DEV_MODE).
+ * Auth gate — shows LoginScreen if not authenticated.
  */
 function AuthGate() {
   const { isAuthenticated, isLoading } = useAuth();
 
-  // DEV_MODE: skip login entirely
-  if (DEV_MODE) return <OSShell />;
-
-  // Non-DEV_MODE: gate on authentication
   if (!isAuthenticated && !isLoading) return <LoginScreen />;
 
   return <OSShell />;
